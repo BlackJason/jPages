@@ -33,6 +33,7 @@
         animation: "", // http://daneden.me/animate/ - any entrance animations
         fallback: 400,
         minHeight: true,
+        remote: undefined, // ajax远程请求
         callback: undefined // function( pages, items ) { }
       };
 
@@ -55,17 +56,20 @@
     this._last = $(this.options.last);
 
     /* only visible items! */
-    this._items = this._container.children(":visible");
+    //this._items = this._container.children(":visible");
+    this._items = null;
     this._itemsShowing = $([]);
     this._itemsHiding = $([]);
 
-    this._numPages = Math.ceil(this._items.length / this.options.perPage);
+    //this._numPages = Math.ceil(this._items.length / this.options.perPage);
+    this._numPages = 0; 
     this._currentPageNum = this.options.startPage;
 
     this._clicked = false;
     this._cssAnimSupport = this.getCSSAnimationSupport();
-
-    this.init();
+    this._status = "init"; // 状态：默认为init,初始化后变为change
+    //this.init();
+    this._init(); // 将初始化方法用_init方法来代替，主要用于异步ajax请求完成后执行init()
   }
 
   Plugin.prototype = {
@@ -96,14 +100,83 @@
 
       return animation;
     },
-
+    
+    _init : function () {
+    	var type = $.type(this.options.remote);
+    	if(type === "object") {
+    		this.remote();
+    	}else {
+    		this.init();
+    	}
+    },
+    
     init : function() {
+      this._items = this._container.children(":visible");
+	     this._numPages = Math.ceil(this.options.totalCount / this.options.perPage);
       this.setStyles();
       this.setNav();
       this.paginate(this._currentPageNum);
       this.setMinHeight();
+      this._status = "change";
     },
-
+    
+    remote: function () {
+    	 var type = $.type(this.options.remote), self = this;
+     	var option = {
+       			  data: {
+       				  start: 0,
+       				  limit: 10
+       			  },
+       			  dataType: "json",
+       			  beforeSend: undefined,
+       			  url: "",
+       			  done: undefined,
+       			  fail: undefined,
+       			  always: undefined,
+       			  filter: undefined
+     	};
+    	
+      if (type === "object") {
+        	$.extend(option, this.options.remote);
+        	self.options.perPage = self.options.remote.data.limit;
+        	$.ajax({
+    		    	data: option.data,
+    			    dataType: option.dataType,
+    			    beforeSend: function () {
+    				     if ($.isFunction(option.beforeSend))
+    					       option.beforeSend();
+    			    },
+    			    url: option.url
+    		   })
+    		   .done (function(data, textStatus, jqXHR){
+    			     if ($.isFunction(option.done)) {
+    				       option.done(data,textStatus, jqXHR);
+    				
+           				if($.isFunction(option.filter)) {
+           					var totalCount= option.filter(data);
+           					self.options.totalCount = totalCount;
+           				}else{
+           					self.options.totalCount = data.totalCount;
+           				}
+    				
+           				if(self._status === "init") self.init();
+    		    	 }
+    		   })
+       		.fail(function(jqXHR, textStatus, errorThrown){
+        			if ($.isFunction(option.fail)) option.fail(jqXHR, textStatus, errorThrown);
+       		})
+       		.always(function () {
+        			if ($.isFunction(option.always)) option.always();
+       		});
+      }
+    },
+    // 改变请求参数
+    changeRequest: function (start, limit){ 
+     	this.options.remote.data.limit = limit || this.options.remote.data.limit; 
+     	this.options.remote.data.start = start * (this.options.remote.data.limit);
+     	this.remote();
+    },
+    
     setStyles : function() {
       var requiredStyles = "<style>" +
       ".jp-invisible { visibility: hidden !important; } " +
@@ -317,6 +390,12 @@
 
     paginate : function(page) {
       var itemRange, pageInterval;
+      if(this._status==="change") {
+    	   var type =this.options.remote;
+    	   if(type === "object") {
+    		    this.changeRequest(page-1);
+    	   }
+      }
       itemRange = this.updateItems(page);
       pageInterval = this.updatePages(page);
       this._currentPageNum = page;
